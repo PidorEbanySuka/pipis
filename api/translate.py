@@ -4,10 +4,19 @@ from http.server import BaseHTTPRequestHandler
 import urllib.parse
 import urllib.request
 
-# Можно менять через переменную окружения в Vercel:
-# LIBRETRANSLATE_URL = https://translate.argosopentech.com
-LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "https://translate.argosopentech.com").rstrip("/")
-LIBRETRANSLATE_KEY = os.getenv("LIBRETRANSLATE_KEY", "").strip()
+
+# 1) Список инстансов LibreTranslate (пробуем по очереди)
+# Можно добавить свой через переменную окружения LIBRETRANSLATE_URL в Vercel
+LT_URLS = [
+    os.getenv("LIBRETRANSLATE_URL", "").strip(),
+    "https://translate.argosopentech.com",
+    "https://libretranslate.de",
+    "https://translate.astian.org",
+]
+LT_URLS = [u.rstrip("/") for u in LT_URLS if u]
+
+LT_KEY = os.getenv("LIBRETRANSLATE_KEY", "").strip()
+
 
 def _send(h, code, payload):
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -20,24 +29,21 @@ def _send(h, code, payload):
     h.end_headers()
     h.wfile.write(body)
 
+
 def _read_json_body(h):
     length = int(h.headers.get("Content-Length", "0"))
     raw = h.rfile.read(length).decode("utf-8") if length > 0 else "{}"
     return json.loads(raw)
 
-def _libretranslate(q: str, source: str, target: str) -> str:
-    payload = {
-        "q": q,
-        "source": source,
-        "target": target,
-        "format": "text",
-    }
-    if LIBRETRANSLATE_KEY:
-        payload["api_key"] = LIBRETRANSLATE_KEY
+
+def _libretranslate_try_one(base_url: str, q: str, source: str, target: str) -> str:
+    payload = {"q": q, "source": source, "target": target, "format": "text"}
+    if LT_KEY:
+        payload["api_key"] = LT_KEY
 
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
-        url=f"{LIBRETRANSLATE_URL}/translate",
+        url=f"{base_url}/translate",
         data=data,
         headers={
             "Content-Type": "application/json",
@@ -48,14 +54,33 @@ def _libretranslate(q: str, source: str, target: str) -> str:
 
     with urllib.request.urlopen(req, timeout=10) as r:
         resp = json.loads(r.read().decode("utf-8"))
-    return resp.get("translatedText", "")
+
+    return (resp.get("translatedText") or "").strip()
+
+
+def _libretranslate(q: str, source: str, target: str):
+    """
+    Возвращает (translated_text, used_base_url) или кидает исключение, если все инстансы упали.
+    """
+    last_err = None
+    for base in LT_URLS:
+        try:
+            txt = _libretranslate_try_one(base, q, source, target)
+            if txt:
+                return txt, base
+        except Exception as e:
+            last_err = e
+            continue
+    raise RuntimeError(f"all libretranslate instances failed: {last_err}")
+
 
 def _mymemory(q: str, source: str, target: str) -> str:
     params = urllib.parse.urlencode({"q": q, "langpair": f"{source}|{target}"})
     url = f"https://api.mymemory.translated.net/get?{params}"
     with urllib.request.urlopen(url, timeout=10) as r:
         resp = json.loads(r.read().decode("utf-8"))
-    return resp["responseData"]["translatedText"]
+    return (resp["responseData"]["translatedText"] or "").strip()
+
 
 class handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
@@ -77,22 +102,31 @@ class handler(BaseHTTPRequestHandler):
         if not q:
             return _send(self, 400, {"error": "Empty text"})
 
-        # Если source=auto, MyMemory auto не любит — сделаем ru как дефолт
+        # MyMemory не любит auto — подставим ru (или можешь сделать en по умолчанию)
         source_for_mymemory = "ru" if source == "auto" else source
 
-        # 1) Пробуем LibreTranslate (обычно качество лучше)
+        # 1) Пробуем LibreTranslate (качество лучше)
         try:
-            translated = _libretranslate(q, source, target)
-            if translated:
-                return _send(self, 200, {"translatedText": translated, "provider": "libretranslate"})
+            translated, used = _libretranslate(q, source, target)
+            return _send(self, 200, {
+                "translatedText": translated,
+                "provider": "libretranslate",
+                "instance": used
+            })
         except Exception as e:
             libre_error = str(e)
-        else:
-            libre_error = "unknown"
 
-        # 2) Fallback на MyMemory (чтобы хоть что-то работало всегда)
+        # 2) Fallback на MyMemory (чтобы всегда что-то отвечало)
         try:
             translated = _mymemory(q, source_for_mymemory, target)
-            return _send(self, 200, {"translatedText": translated, "provider": "mymemory", "fallbackFrom": libre_error})
+            return _send(self, 200, {
+                "translatedText": translated,
+                "provider": "mymemory",
+                "fallbackFrom": libre_error
+            })
         except Exception as e:
-            return _send(self, 502, {"error": f"Both providers failed: libretranslate={libre_error}; mymemory={e}"})
+            return _send(self, 502, {
+                "error": "Both providers failed",
+                "libretranslate": libre_error,
+                "mymemory": str(e)
+            })
