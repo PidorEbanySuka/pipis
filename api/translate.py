@@ -1,11 +1,9 @@
 import json
-import os
 from http.server import BaseHTTPRequestHandler
+import urllib.parse
+import urllib.request
 
-LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "https://libretranslate.com").rstrip("/")
-LIBRETRANSLATE_KEY = os.getenv("LIBRETRANSLATE_KEY", "")
-
-def _send_json(h, code: int, payload: dict):
+def _send(h, code, payload):
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     h.send_response(code)
     h.send_header("Content-Type", "application/json; charset=utf-8")
@@ -18,60 +16,37 @@ def _send_json(h, code: int, payload: dict):
 
 class handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
-        return _send_json(self, 200, {"ok": True})
+        return _send(self, 200, {"ok": True})
 
     def do_POST(self):
         if self.path != "/api/translate":
-            return _send_json(self, 404, {"error": "Not found"})
+            return _send(self, 404, {"error": "Not found"})
 
-        # 1) читаем тело
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
-            data = json.loads(raw)
-        except Exception as e:
-            return _send_json(self, 400, {"error": f"Bad JSON: {e}"})
+            data = json.loads(self.rfile.read(length).decode("utf-8"))
+        except Exception:
+            return _send(self, 400, {"error": "Bad JSON"})
 
         q = (data.get("q") or "").strip()
-        source = (data.get("source") or "auto").strip()
-        target = (data.get("target") or "en").strip()
+        source = data.get("source", "ru")
+        target = data.get("target", "en")
 
         if not q:
-            return _send_json(self, 400, {"error": "Empty text"})
+            return _send(self, 400, {"error": "Empty text"})
 
-        # 2) импорт requests — частая причина краша на Vercel
         try:
-            import requests
-        except Exception as e:
-            return _send_json(self, 500, {"error": f"requests import failed: {e}. Check requirements.txt in repo root."})
-
-        payload = {"q": q, "source": source, "target": target, "format": "text"}
-        if LIBRETRANSLATE_KEY:
-            payload["api_key"] = LIBRETRANSLATE_KEY
-
-        # 3) вызов провайдера
-        try:
-            resp = requests.post(
-                f"{LIBRETRANSLATE_URL}/translate",
-                json=payload,
-                timeout=15,
-                headers={"User-Agent": "tg-miniapp-translator/1.0"},
-            )
-        except Exception as e:
-            return _send_json(self, 502, {"error": f"Provider request failed: {e}", "provider": LIBRETRANSLATE_URL})
-
-        if resp.status_code != 200:
-            # вернём кусок ответа, чтобы было понятно, что случилось
-            return _send_json(self, 502, {
-                "error": "Translate provider error",
-                "status": resp.status_code,
-                "details": resp.text[:300],
-                "provider": LIBRETRANSLATE_URL
+            params = urllib.parse.urlencode({
+                "q": q,
+                "langpair": f"{source}|{target}"
             })
+            url = f"https://api.mymemory.translated.net/get?{params}"
 
-        try:
-            out = resp.json()
+            with urllib.request.urlopen(url, timeout=10) as r:
+                resp = json.loads(r.read().decode("utf-8"))
+
+            translated = resp["responseData"]["translatedText"]
+            return _send(self, 200, {"translatedText": translated})
+
         except Exception as e:
-            return _send_json(self, 502, {"error": f"Provider returned non-JSON: {e}", "details": resp.text[:200]})
-
-        return _send_json(self, 200, {"translatedText": out.get("translatedText", "")})
+            return _send(self, 500, {"error": str(e)})
