@@ -1,21 +1,8 @@
 import json
-import os
 from http.server import BaseHTTPRequestHandler
 import urllib.parse
 import urllib.request
-
-
-# 1) Список инстансов LibreTranslate (пробуем по очереди)
-# Можно добавить свой через переменную окружения LIBRETRANSLATE_URL в Vercel
-LT_URLS = [
-    os.getenv("LIBRETRANSLATE_URL", "").strip(),
-    "https://translate.argosopentech.com",
-    "https://libretranslate.de",
-    "https://translate.astian.org",
-]
-LT_URLS = [u.rstrip("/") for u in LT_URLS if u]
-
-LT_KEY = os.getenv("LIBRETRANSLATE_KEY", "").strip()
+import time
 
 
 def _send(h, code, payload):
@@ -36,50 +23,47 @@ def _read_json_body(h):
     return json.loads(raw)
 
 
-def _libretranslate_try_one(base_url: str, q: str, source: str, target: str) -> str:
-    payload = {"q": q, "source": source, "target": target, "format": "text"}
-    if LT_KEY:
-        payload["api_key"] = LT_KEY
-
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url=f"{base_url}/translate",
-        data=data,
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": "tg-miniapp-translator/1.0",
-        },
-        method="POST",
-    )
-
-    with urllib.request.urlopen(req, timeout=10) as r:
-        resp = json.loads(r.read().decode("utf-8"))
-
-    return (resp.get("translatedText") or "").strip()
-
-
-def _libretranslate(q: str, source: str, target: str):
+def _looks_like_garbage(src: str, dst: str) -> bool:
     """
-    Возвращает (translated_text, used_base_url) или кидает исключение, если все инстансы упали.
+    Очень простая проверка "похоже ли на мусор":
+    - исходник короткий (1–2 слова), а перевод неожиданно длинный
+    - перевод содержит слишком много слов для короткого исходника
     """
-    last_err = None
-    for base in LT_URLS:
-        try:
-            txt = _libretranslate_try_one(base, q, source, target)
-            if txt:
-                return txt, base
-        except Exception as e:
-            last_err = e
-            continue
-    raise RuntimeError(f"all libretranslate instances failed: {last_err}")
+    src_words = [w for w in src.strip().split() if w]
+    dst_words = [w for w in dst.strip().split() if w]
+
+    if len(src_words) <= 2 and len(dst_words) >= 6:
+        return True
+
+    if len(src) <= 10 and len(dst) >= 40:
+        return True
+
+    return False
 
 
 def _mymemory(q: str, source: str, target: str) -> str:
     params = urllib.parse.urlencode({"q": q, "langpair": f"{source}|{target}"})
     url = f"https://api.mymemory.translated.net/get?{params}"
-    with urllib.request.urlopen(url, timeout=10) as r:
+    with urllib.request.urlopen(url, timeout=12) as r:
         resp = json.loads(r.read().decode("utf-8"))
     return (resp["responseData"]["translatedText"] or "").strip()
+
+
+def _translate_with_retry(q: str, source: str, target: str) -> str:
+    last_err = None
+    for attempt in range(3):  # 3 попытки
+        try:
+            t = _mymemory(q, source, target)
+            if t and not _looks_like_garbage(q, t):
+                return t
+            # Если выглядит как мусор — попробуем ещё раз
+            last_err = f"bad translation: {t[:80]}"
+        except Exception as e:
+            last_err = str(e)
+
+        time.sleep(0.25)  # маленькая пауза
+
+    raise RuntimeError(last_err or "unknown error")
 
 
 class handler(BaseHTTPRequestHandler):
@@ -96,37 +80,25 @@ class handler(BaseHTTPRequestHandler):
             return _send(self, 400, {"error": f"Bad JSON: {e}"})
 
         q = (data.get("q") or "").strip()
-        source = (data.get("source") or "auto").strip()
+        source = (data.get("source") or "ru").strip()
         target = (data.get("target") or "en").strip()
 
         if not q:
             return _send(self, 400, {"error": "Empty text"})
 
-        # MyMemory не любит auto — подставим ru (или можешь сделать en по умолчанию)
-        source_for_mymemory = "ru" if source == "auto" else source
+        # MyMemory плохо с auto — оставим ru/en или то, что выбрал пользователь
+        if source == "auto":
+            source = "ru"
 
-        # 1) Пробуем LibreTranslate (качество лучше)
         try:
-            translated, used = _libretranslate(q, source, target)
+            translated = _translate_with_retry(q, source, target)
             return _send(self, 200, {
                 "translatedText": translated,
-                "provider": "libretranslate",
-                "instance": used
-            })
-        except Exception as e:
-            libre_error = str(e)
-
-        # 2) Fallback на MyMemory (чтобы всегда что-то отвечало)
-        try:
-            translated = _mymemory(q, source_for_mymemory, target)
-            return _send(self, 200, {
-                "translatedText": translated,
-                "provider": "mymemory",
-                "fallbackFrom": libre_error
+                "provider": "mymemory"
             })
         except Exception as e:
             return _send(self, 502, {
-                "error": "Both providers failed",
-                "libretranslate": libre_error,
-                "mymemory": str(e)
+                "error": "Translate provider error",
+                "details": str(e),
+                "provider": "mymemory"
             })
