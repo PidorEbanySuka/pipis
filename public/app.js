@@ -12,12 +12,15 @@ const hintEl = document.getElementById("hint");
 const counterEl = document.getElementById("counter");
 const swapBtn = document.getElementById("swap");
 const copyBtn = document.getElementById("copy");
-const errorEl = document.getElementById("error");
 const toastEl = document.getElementById("toast");
+const detectedBadgeEl = document.getElementById("detectedBadge");
 
-// Список языков (можешь дополнять)
+const MAX_LEN = 5000;
+
+// Больше языков (можешь дополнять)
 const LANGS = [
   { code: "auto", name: "Определить язык" },
+
   { code: "ru", name: "Русский" },
   { code: "en", name: "English" },
   { code: "de", name: "Deutsch" },
@@ -26,118 +29,145 @@ const LANGS = [
   { code: "it", name: "Italiano" },
   { code: "pt", name: "Português" },
   { code: "tr", name: "Türkçe" },
-  { code: "uk", name: "Українська" },
   { code: "pl", name: "Polski" },
+  { code: "uk", name: "Українська" },
   { code: "cs", name: "Čeština" },
+  { code: "sk", name: "Slovenčina" },
   { code: "sv", name: "Svenska" },
+  { code: "no", name: "Norsk" },
+  { code: "da", name: "Dansk" },
   { code: "fi", name: "Suomi" },
   { code: "nl", name: "Nederlands" },
-  { code: "ja", name: "日本語" },
+
   { code: "zh", name: "中文" },
+  { code: "ja", name: "日本語" },
   { code: "ko", name: "한국어" },
+
+  { code: "ar", name: "العربية" },
+  { code: "he", name: "עברית" },
+  { code: "hi", name: "हिन्दी" },
 ];
 
-function setHint(text) {
+function setHint(text, isError = false) {
   hintEl.textContent = text || "";
-}
-
-function setError(text) {
-  errorEl.textContent = text || "";
-}
-
-function toast(text) {
-  toastEl.textContent = text;
-  toastEl.classList.add("show");
-  clearTimeout(toast._t);
-  toast._t = setTimeout(() => toastEl.classList.remove("show"), 900);
+  hintEl.classList.toggle("err", !!isError);
 }
 
 function langName(code) {
   const c = (code || "").toLowerCase();
-  const found = LANGS.find(x => x.code === c);
-  return found ? found.name : (code || "");
+  return (LANGS.find(x => x.code === c)?.name) || (code || "");
 }
 
-function fillSelect(el, selected) {
-  el.innerHTML = "";
-  for (const l of LANGS) {
-    const opt = document.createElement("option");
-    opt.value = l.code;
-    opt.textContent = l.name;
-    el.appendChild(opt);
-  }
-  el.value = selected;
+function showToast(text = "Скопировано") {
+  toastEl.textContent = text;
+  toastEl.hidden = false;
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => {
+    toastEl.hidden = true;
+  }, 900);
 }
 
-function setAutoLabel(detectedCode) {
-  const opt = [...fromEl.options].find(o => o.value === "auto");
-  if (!opt) return;
+function updateCounter() {
+  const len = (srcEl.value || "").length;
+  counterEl.textContent = `${len}/${MAX_LEN}`;
+}
 
-  if (detectedCode) {
-    opt.textContent = `Определить язык (${langName(detectedCode)})`;
+function updateSwapState() {
+  const isAuto = (fromEl.value === "auto");
+  swapBtn.disabled = isAuto;
+  swapBtn.title = isAuto ? "Нельзя менять местами при автоопределении" : "Поменять языки";
+}
+
+function setDetectedBadge(detectedCode) {
+  const isAuto = (fromEl.value === "auto");
+
+  if (isAuto && detectedCode) {
+    detectedBadgeEl.hidden = false;
+    detectedBadgeEl.textContent = `Определён: ${langName(detectedCode)}`;
   } else {
-    opt.textContent = "Определить язык";
+    detectedBadgeEl.hidden = true;
+    detectedBadgeEl.textContent = "";
   }
 }
 
-// debounce
-function debounce(fn, ms) {
-  let t;
-  return (...args) => {
-    clearTimeout(t);
-    t = setTimeout(() => fn(...args), ms);
-  };
-}
+function fillLangSelects() {
+  fromEl.innerHTML = "";
+  toEl.innerHTML = "";
 
-async function copyText(text) {
-  const value = (text || "").trim();
-  if (!value) return;
+  for (const l of LANGS) {
+    const o1 = document.createElement("option");
+    o1.value = l.code;
+    o1.textContent = l.name;
+    fromEl.appendChild(o1);
 
-  try {
-    await navigator.clipboard.writeText(value);
-    toast("Скопировано");
-  } catch {
-    // fallback
-    const ta = document.createElement("textarea");
-    ta.value = value;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand("copy");
-    ta.remove();
-    toast("Скопировано");
+    // в целевой список auto не добавляем
+    if (l.code !== "auto") {
+      const o2 = document.createElement("option");
+      o2.value = l.code;
+      o2.textContent = l.name;
+      toEl.appendChild(o2);
+    }
   }
+
+  fromEl.value = "auto";
+  toEl.value = "en";
 }
 
 function swapLanguages() {
+  if (fromEl.value === "auto") return;
+
   const a = fromEl.value;
   fromEl.value = toEl.value;
   toEl.value = a;
 
-  // тексты местами
+  // swap текста как в переводчиках
   const t = srcEl.value;
   srcEl.value = dstEl.value;
   dstEl.value = t;
 
-  // сброс подписи автоязыка
-  setAutoLabel(null);
-
+  setDetectedBadge(null);
+  updateSwapState();
+  updateCounter();
   translateDebounced();
+}
+
+async function copyTranslation() {
+  const text = (dstEl.value || "").trim();
+  if (!text) return;
+
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("Скопировано");
+  } catch {
+    // fallback
+    dstEl.focus();
+    dstEl.select();
+    document.execCommand("copy");
+    showToast("Скопировано");
+  }
+}
+
+// debounce
+let tmr = null;
+function translateDebounced() {
+  clearTimeout(tmr);
+  tmr = setTimeout(() => translateOnce(), 350);
 }
 
 async function translateOnce() {
   const q = (srcEl.value || "").trim();
-
-  counterEl.textContent = `${(srcEl.value || "").length}/5000`;
-  setError("");
+  updateCounter();
 
   if (!q) {
     dstEl.value = "";
     setHint("");
-    setAutoLabel(null);
+    setDetectedBadge(null);
+    copyBtn.disabled = true;
     return;
   }
 
-  setHint("Перевожу…");
+  setHint("Перевожу...");
+  copyBtn.disabled = true;
 
   try {
     const r = await fetch("/api/translate", {
@@ -155,55 +185,66 @@ async function translateOnce() {
     try {
       data = JSON.parse(text);
     } catch {
-      throw new Error(text.slice(0, 200) || "Ответ сервера не JSON");
+      throw new Error(text.slice(0, 180) || "Ответ сервера не JSON");
     }
 
     if (!r.ok) {
-      // покажем код и сообщение как есть
+      // показываем максимально полезно
+      const code = data?.status || data?.code || r.status;
       const msg = data?.error || "Ошибка перевода";
-      const details = data?.details ? ` — ${data.details}` : "";
-      throw new Error(`${msg}${details}`);
+      const details = data?.details ? ` • ${String(data.details).slice(0, 140)}` : "";
+      throw new Error(`${msg} (${code})${details}`);
     }
 
     dstEl.value = data.translatedText || "";
-    setHint("");
+    copyBtn.disabled = !(dstEl.value || "").trim();
 
-    // автоязык: поддерживаем разные имена полей
+    // подхватим язык из любого разумного поля
     const detected =
       data.detectedLanguage ||
       data.detected ||
       data.sourceLanguage ||
       data.lang ||
-      null;
+      data.source;
 
-    setAutoLabel(detected);
-  } catch (e) {
+    setDetectedBadge(detected || null);
     setHint("");
-    setError(e?.message || String(e));
+  } catch (e) {
+    setHint("Ошибка: " + (e?.message || e), true);
+    copyBtn.disabled = true;
   }
 }
 
-const translateDebounced = debounce(translateOnce, 350);
+function init() {
+  fillLangSelects();
+  updateCounter();
+  updateSwapState();
+  setDetectedBadge(null);
+  copyBtn.disabled = true;
 
-// events
-swapBtn.addEventListener("click", swapLanguages);
+  // события
+  swapBtn.addEventListener("click", swapLanguages);
+  copyBtn.addEventListener("click", copyTranslation);
 
-srcEl.addEventListener("input", () => {
-  counterEl.textContent = `${(srcEl.value || "").length}/5000`;
-  translateDebounced();
-});
+  fromEl.addEventListener("change", () => {
+    setDetectedBadge(null);
+    updateSwapState();
+    translateDebounced();
+  });
 
-fromEl.addEventListener("change", () => {
-  setAutoLabel(null);
-  translateDebounced();
-});
-toEl.addEventListener("change", () => translateDebounced());
+  toEl.addEventListener("change", () => {
+    translateDebounced();
+  });
 
-copyBtn.addEventListener("click", () => copyText(dstEl.value));
-dstEl.addEventListener("click", () => copyText(dstEl.value));
+  srcEl.addEventListener("input", () => {
+    updateCounter();
+    translateDebounced();
+  });
 
-// init
-fillSelect(fromEl, "auto");
-fillSelect(toEl, "en");
-counterEl.textContent = "0/5000";
-setAutoLabel(null);
+  // Клик по переводу тоже копирует (по желанию — удобно)
+  dstEl.addEventListener("click", () => {
+    if ((dstEl.value || "").trim()) copyTranslation();
+  });
+}
+
+init();
