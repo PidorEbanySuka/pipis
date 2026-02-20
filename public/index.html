@@ -2,50 +2,52 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Переводчик</title>
-
-  <!-- CSS -->
-  <link rel="stylesheet" href="/style.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Translator</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 
 <body>
-  <div class="wrap">
-    <div class="card top">
-      <div class="langs">
-        <select id="from" class="select"></select>
+  <main class="wrap">
+    <div class="panel">
+      <div class="langRow">
+        <select id="from" class="sel"></select>
 
-        <button id="swap" class="iconBtn" type="button" title="Поменять языки">
+        <button id="swap" class="swap" type="button" title="Поменять языки" aria-label="swap">
           ⇄
         </button>
 
-        <select id="to" class="select"></select>
+        <select id="to" class="sel"></select>
+      </div>
+
+      <div class="card cardInput">
+        <textarea id="src" class="ta" placeholder="Введите текст..." maxlength="5000"></textarea>
+
+        <!-- Бейдж автоопределения (появится только когда from=auto и язык определён) -->
+        <div id="detectedBadge" class="detectedBadge" hidden></div>
+
+        <div class="metaRow">
+          <div id="counter" class="counter">0/5000</div>
+          <div id="hint" class="hint"></div>
+        </div>
+      </div>
+
+      <div class="card cardOut">
+        <textarea id="dst" class="ta taOut" placeholder="Перевод появится здесь..." readonly></textarea>
+
+        <button id="copy" class="copyBtn" type="button" title="Копировать перевод" aria-label="copy">
+          <!-- простая иконка как на скрине -->
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M16 1H6a2 2 0 0 0-2 2v12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <rect x="8" y="7" width="14" height="16" rx="2" stroke="currentColor" stroke-width="2"/>
+          </svg>
+        </button>
       </div>
     </div>
 
-    <div class="card">
-      <textarea id="src" class="ta" placeholder="Введите текст..." maxlength="5000"></textarea>
-      <div class="row">
-        <div id="counter" class="muted">0/5000</div>
-        <div id="hint" class="muted"></div>
-      </div>
-    </div>
+    <div id="toast" class="toast" hidden>Скопировано</div>
+  </main>
 
-    <div class="card outCard">
-      <button id="copy" class="copyIcon" type="button" title="Копировать перевод" aria-label="Копировать перевод">
-        <!-- copy icon -->
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path d="M16 1H6a2 2 0 0 0-2 2v12h2V3h10V1zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H10V7h9v14z"></path>
-        </svg>
-      </button>
-
-      <textarea id="dst" class="ta taOut" placeholder="Перевод появится здесь…" readonly></textarea>
-      <div id="error" class="error"></div>
-    </div>
-
-    <div id="toast" class="toast" aria-live="polite"></div>
-  </div>
-
-  <script src="/app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
