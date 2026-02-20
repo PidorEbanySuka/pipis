@@ -3,12 +3,8 @@ import os
 from http.server import BaseHTTPRequestHandler
 import urllib.request
 import urllib.error
-import urllib.parse
 
 
-# Vercel Environment Variables:
-# YC_API_KEY   = твой API key (scope yc.ai.translate.execute)
-# YC_FOLDER_ID = id каталога (folderId)
 YC_API_KEY = os.getenv("YC_API_KEY", "").strip()
 YC_FOLDER_ID = os.getenv("YC_FOLDER_ID", "").strip()
 
@@ -37,7 +33,6 @@ def _read_json_body(h) -> dict:
 
 
 def _norm_lang(code: str) -> str:
-    # Yandex Translate ждёт типа: "en", "ru", "de"...
     c = (code or "").strip().lower()
     return c if c else "en"
 
@@ -56,8 +51,6 @@ def _yandex_translate(text: str, source: str, target: str) -> dict:
         "texts": [text],
         "targetLanguageCode": target,
     }
-
-    # Если source != auto — передаём, иначе пусть определит сам
     if source and source != "auto":
         body["sourceLanguageCode"] = _norm_lang(source)
 
@@ -74,33 +67,14 @@ def _yandex_translate(text: str, source: str, target: str) -> dict:
         },
     )
 
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            resp_text = r.read().decode("utf-8", errors="replace")
-            resp = json.loads(resp_text)
+    with urllib.request.urlopen(req, timeout=15) as r:
+        resp_text = r.read().decode("utf-8", errors="replace")
+        resp = json.loads(resp_text)
 
-        translations = resp.get("translations") or []
-        out = (translations[0].get("text") or "") if translations else ""
-        detected = (translations[0].get("detectedLanguageCode") or "") if translations else ""
-        return {"text": out.strip(), "detected": detected}
-
-    except urllib.error.HTTPError as e:
-        # ВАЖНО: читаем тело ошибки, чтобы понять причину (401/403/400)
-        err_body = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {e.code}: {err_body[:600]}")
-
-    except urllib.error.URLError as e:
-        raise RuntimeError(f"URLError: {e}")
-
-
-def _mymemory(text: str, source: str, target: str) -> str:
-    src = "ru" if (source or "").strip().lower() == "auto" else _norm_lang(source or "ru")
-    tgt = _norm_lang(target)
-    params = urllib.parse.urlencode({"q": text, "langpair": f"{src}|{tgt}"})
-    url = f"https://api.mymemory.translated.net/get?{params}"
-    with urllib.request.urlopen(url, timeout=10) as r:
-        resp = json.loads(r.read().decode("utf-8"))
-    return (resp["responseData"]["translatedText"] or "").strip()
+    translations = resp.get("translations") or []
+    out = (translations[0].get("text") or "") if translations else ""
+    detected = (translations[0].get("detectedLanguageCode") or "") if translations else ""
+    return {"text": out.strip(), "detected": detected}
 
 
 class handler(BaseHTTPRequestHandler):
@@ -123,29 +97,33 @@ class handler(BaseHTTPRequestHandler):
         if not q:
             return _send(self, 400, {"error": "Empty text"})
 
-        # 1) Yandex Cloud Translate (основной)
         try:
             y = _yandex_translate(q, source, target)
-            if y["text"]:
-                return _send(self, 200, {
-                    "translatedText": y["text"],
-                    "provider": "yandex",
-                    "detectedLanguageCode": y.get("detected", "")
-                })
-        except Exception as e:
-            yerr = str(e)
-
-        # 2) fallback (чтобы хоть что-то работало)
-        try:
-            fallback = _mymemory(q, source, target)
             return _send(self, 200, {
-                "translatedText": fallback,
-                "provider": "mymemory",
-                "fallbackFrom": yerr
+                "translatedText": y["text"],
+                "provider": "yandex",
+                "detectedLanguageCode": y.get("detected", "")
             })
-        except Exception as e:
+
+        except urllib.error.HTTPError as e:
+            # Показать код и тело ошибки от Яндекса
+            err_body = e.read().decode("utf-8", errors="replace")
             return _send(self, 502, {
-                "error": "Both providers failed",
-                "yandex": yerr,
-                "mymemory": str(e)
+                "error": "Yandex Translate HTTPError",
+                "status": e.code,
+                "details": err_body[:2000],   # чтобы не раздувать ответ
+                "endpoint": YC_TRANSLATE_URL
+            })
+
+        except urllib.error.URLError as e:
+            return _send(self, 502, {
+                "error": "Yandex Translate URLError",
+                "details": str(e),
+                "endpoint": YC_TRANSLATE_URL
+            })
+
+        except Exception as e:
+            return _send(self, 500, {
+                "error": "Yandex Translate UnknownError",
+                "details": str(e),
             })
