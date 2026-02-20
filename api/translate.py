@@ -82,6 +82,17 @@ class handler(BaseHTTPRequestHandler):
         return _send(self, 200, {"ok": True})
 
     def do_POST(self):
+        if not os.getenv("YC_API_KEY"):
+            return _send(self, 500, {
+                "error": "ENV_CHECK",
+                "details": "YC_API_KEY missing at runtime"
+            })
+
+        if not os.getenv("YC_FOLDER_ID"):
+            return _send(self, 500, {
+                "error": "ENV_CHECK",
+                "details": "YC_FOLDER_ID missing at runtime"
+            })
         if self.path != "/api/translate":
             return _send(self, 404, {"error": "Not found"})
 
@@ -127,3 +138,4 @@ class handler(BaseHTTPRequestHandler):
                 "error": "Yandex Translate UnknownError",
                 "details": str(e),
             })
+
