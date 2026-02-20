@@ -4,39 +4,20 @@ if (tg) {
   tg.expand();
 }
 
-// DOM
 const fromEl = document.getElementById("from");
 const toEl = document.getElementById("to");
 const srcEl = document.getElementById("src");
 const dstEl = document.getElementById("dst");
 const hintEl = document.getElementById("hint");
+const counterEl = document.getElementById("counter");
 const swapBtn = document.getElementById("swap");
-const statusPill = document.getElementById("statusPill");
-const detectedLine = document.getElementById("detectedLine");
+const copyBtn = document.getElementById("copy");
+const errorEl = document.getElementById("error");
 const toastEl = document.getElementById("toast");
-const copyBtn = document.getElementById("copyBtn");
-const srcCount = document.getElementById("srcCount");
 
-function setHint(text) {
-  hintEl.textContent = text || "";
-}
-
-function setStatus(text, ok = true) {
-  statusPill.textContent = text;
-  statusPill.style.color = ok ? "var(--muted)" : "var(--danger)";
-}
-
-function showToast(text) {
-  toastEl.textContent = text;
-  toastEl.classList.add("show");
-  clearTimeout(showToast._t);
-  showToast._t = setTimeout(() => toastEl.classList.remove("show"), 1100);
-}
-
-// Языки (можешь расширять — добавил больше популярных)
+// Список языков (можешь дополнять)
 const LANGS = [
   { code: "auto", name: "Определить язык" },
-
   { code: "ru", name: "Русский" },
   { code: "en", name: "English" },
   { code: "de", name: "Deutsch" },
@@ -45,119 +26,118 @@ const LANGS = [
   { code: "it", name: "Italiano" },
   { code: "pt", name: "Português" },
   { code: "tr", name: "Türkçe" },
+  { code: "uk", name: "Українська" },
   { code: "pl", name: "Polski" },
-  { code: "nl", name: "Nederlands" },
   { code: "cs", name: "Čeština" },
   { code: "sv", name: "Svenska" },
-  { code: "no", name: "Norsk" },
-  { code: "da", name: "Dansk" },
   { code: "fi", name: "Suomi" },
-
-  { code: "uk", name: "Українська" },
-  { code: "be", name: "Беларуская" },
-
-  { code: "kk", name: "Қазақша" },
-  { code: "uz", name: "O‘zbek" },
-
-  { code: "zh", name: "中文" },
+  { code: "nl", name: "Nederlands" },
   { code: "ja", name: "日本語" },
+  { code: "zh", name: "中文" },
   { code: "ko", name: "한국어" },
-
-  { code: "ar", name: "العربية" },
-  { code: "he", name: "עברית" },
-  { code: "hi", name: "हिन्दी" },
 ];
 
-const LANG_NAME_BY_CODE = Object.fromEntries(
-  LANGS.filter(x => x.code !== "auto").map(x => [x.code, x.name])
-);
+function setHint(text) {
+  hintEl.textContent = text || "";
+}
 
-// Заполнение селектов
-function fillSelect(sel, items) {
-  sel.innerHTML = "";
-  for (const it of items) {
+function setError(text) {
+  errorEl.textContent = text || "";
+}
+
+function toast(text) {
+  toastEl.textContent = text;
+  toastEl.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => toastEl.classList.remove("show"), 900);
+}
+
+function langName(code) {
+  const c = (code || "").toLowerCase();
+  const found = LANGS.find(x => x.code === c);
+  return found ? found.name : (code || "");
+}
+
+function fillSelect(el, selected) {
+  el.innerHTML = "";
+  for (const l of LANGS) {
     const opt = document.createElement("option");
-    opt.value = it.code;
-    opt.textContent = it.name;
-    sel.appendChild(opt);
+    opt.value = l.code;
+    opt.textContent = l.name;
+    el.appendChild(opt);
+  }
+  el.value = selected;
+}
+
+function setAutoLabel(detectedCode) {
+  const opt = [...fromEl.options].find(o => o.value === "auto");
+  if (!opt) return;
+
+  if (detectedCode) {
+    opt.textContent = `Определить язык (${langName(detectedCode)})`;
+  } else {
+    opt.textContent = "Определить язык";
   }
 }
-fillSelect(fromEl, LANGS);
-fillSelect(toEl, LANGS.filter(x => x.code !== "auto"));
 
-// дефолты
-fromEl.value = "auto";
-toEl.value = "en";
+// debounce
+function debounce(fn, ms) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
+}
+
+async function copyText(text) {
+  const value = (text || "").trim();
+  if (!value) return;
+
+  try {
+    await navigator.clipboard.writeText(value);
+    toast("Скопировано");
+  } catch {
+    // fallback
+    const ta = document.createElement("textarea");
+    ta.value = value;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+    toast("Скопировано");
+  }
+}
 
 function swapLanguages() {
-  // если from=auto — swapping смысла мало, но сделаем “как есть”:
   const a = fromEl.value;
   fromEl.value = toEl.value;
-  toEl.value = a === "auto" ? "en" : a; // чтобы справа не оказалось auto
+  toEl.value = a;
 
-  // местами текст
+  // тексты местами
   const t = srcEl.value;
   srcEl.value = dstEl.value;
   dstEl.value = t;
 
-  detectedLine.textContent = "";
-  setHint("");
-  scheduleTranslate(0);
-}
+  // сброс подписи автоязыка
+  setAutoLabel(null);
 
-// копирование
-async function copyTranslation() {
-  const text = (dstEl.value || "").trim();
-  if (!text) return;
-
-  try {
-    await navigator.clipboard.writeText(text);
-    showToast("Скопировано ✅");
-  } catch {
-    // fallback для старых браузеров
-    dstEl.focus();
-    dstEl.select();
-    document.execCommand("copy");
-    showToast("Скопировано ✅");
-  }
-}
-
-// Debounce перевод
-let _timer = null;
-let _lastReqId = 0;
-
-function scheduleTranslate(delay = 350) {
-  clearTimeout(_timer);
-  _timer = setTimeout(() => translateOnce(), delay);
-}
-
-function updateCounter() {
-  const n = (srcEl.value || "").length;
-  srcCount.textContent = String(n);
-}
-
-function prettyDetected(code) {
-  if (!code) return "";
-  const c = String(code).toLowerCase();
-  return LANG_NAME_BY_CODE[c] || c.toUpperCase();
+  translateDebounced();
 }
 
 async function translateOnce() {
   const q = (srcEl.value || "").trim();
-  updateCounter();
+
+  counterEl.textContent = `${(srcEl.value || "").length}/5000`;
+  setError("");
 
   if (!q) {
     dstEl.value = "";
-    detectedLine.textContent = "";
     setHint("");
-    setStatus("Готов", true);
+    setAutoLabel(null);
     return;
   }
 
-  const reqId = ++_lastReqId;
-
-  setStatus("Перевожу…", true);
-  setHint("");
+  setHint("Перевожу…");
 
   try {
     const r = await fetch("/api/translate", {
@@ -165,7 +145,7 @@ async function translateOnce() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         q,
-        source: fromEl.value, // "auto" или "ru" и т.д.
+        source: fromEl.value,
         target: toEl.value,
       }),
     });
@@ -178,54 +158,52 @@ async function translateOnce() {
       throw new Error(text.slice(0, 200) || "Ответ сервера не JSON");
     }
 
-    // если есть более новый запрос — этот игнорим
-    if (reqId !== _lastReqId) return;
-
     if (!r.ok) {
-      // показываем код ошибки Яндекса, который отдаёт твой бэкенд
-      const msg = data?.error || `HTTP ${r.status}`;
+      // покажем код и сообщение как есть
+      const msg = data?.error || "Ошибка перевода";
       const details = data?.details ? ` — ${data.details}` : "";
-      throw new Error(msg + details);
+      throw new Error(`${msg}${details}`);
     }
 
     dstEl.value = data.translatedText || "";
+    setHint("");
 
-    // detectedLanguageCode приходит, когда source=auto (и иногда даже когда не auto)
-    if (fromEl.value === "auto") {
-      const det = data.detectedLanguageCode || data.detected || data.sourceLanguageCode;
-      if (det) {
-        detectedLine.textContent = `Определить язык (${prettyDetected(det)})`;
-      } else {
-        detectedLine.textContent = "Определить язык";
-      }
-    } else {
-      detectedLine.textContent = "";
-    }
+    // автоязык: поддерживаем разные имена полей
+    const detected =
+      data.detectedLanguage ||
+      data.detected ||
+      data.sourceLanguage ||
+      data.lang ||
+      null;
 
-    setStatus("Готов", true);
+    setAutoLabel(detected);
   } catch (e) {
-    if (reqId !== _lastReqId) return;
-    setStatus("Ошибка", false);
-    setHint("Ошибка: " + (e?.message || e));
+    setHint("");
+    setError(e?.message || String(e));
   }
 }
 
-// события
+const translateDebounced = debounce(translateOnce, 350);
+
+// events
 swapBtn.addEventListener("click", swapLanguages);
 
 srcEl.addEventListener("input", () => {
-  updateCounter();
-  scheduleTranslate(350);
+  counterEl.textContent = `${(srcEl.value || "").length}/5000`;
+  translateDebounced();
 });
+
 fromEl.addEventListener("change", () => {
-  detectedLine.textContent = "";
-  scheduleTranslate(0);
+  setAutoLabel(null);
+  translateDebounced();
 });
-toEl.addEventListener("change", () => scheduleTranslate(0));
+toEl.addEventListener("change", () => translateDebounced());
 
-// клик по переводу = копировать
-dstEl.addEventListener("click", copyTranslation);
-copyBtn.addEventListener("click", copyTranslation);
+copyBtn.addEventListener("click", () => copyText(dstEl.value));
+dstEl.addEventListener("click", () => copyText(dstEl.value));
 
-// старт
-updateCounter();
+// init
+fillSelect(fromEl, "auto");
+fillSelect(toEl, "en");
+counterEl.textContent = "0/5000";
+setAutoLabel(null);
