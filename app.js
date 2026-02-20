@@ -10,7 +10,10 @@ const srcEl = document.getElementById("src");
 const dstEl = document.getElementById("dst");
 const hintEl = document.getElementById("hint");
 const swapBtn = document.getElementById("swap");
+// Кнопка больше не нужна, но если она в HTML есть — можно скрыть
 const goBtn = document.getElementById("go");
+
+if (goBtn) goBtn.style.display = "none";
 
 function setHint(text) {
   hintEl.textContent = text || "";
@@ -18,13 +21,31 @@ function setHint(text) {
 
 function swapLanguages() {
   const a = fromEl.value;
-  fromEl.value = toEl.value;
-  toEl.value = a;
+  const b = toEl.value;
 
-  // Меняем местами текст, чтобы было "как в переводчике"
+  // если слева auto — при swap сделаем слева язык справа, а справа auto не ставим
+  fromEl.value = b;
+  toEl.value = a === "auto" ? "en" : a;
+
   const t = srcEl.value;
   srcEl.value = dstEl.value;
   dstEl.value = t;
+
+  scheduleTranslate();
+}
+
+// --- мгновенный перевод (debounce) + abort предыдущего запроса ---
+let debounceTimer = null;
+let currentAbort = null;
+let lastPayloadKey = "";
+
+function payloadKey(q, source, target) {
+  return `${source}>>${target}::${q}`;
+}
+
+function scheduleTranslate() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => translateOnce(), 450);
 }
 
 async function translateOnce() {
@@ -32,50 +53,72 @@ async function translateOnce() {
   if (!q) {
     dstEl.value = "";
     setHint("");
+    lastPayloadKey = "";
+    if (currentAbort) currentAbort.abort();
+    currentAbort = null;
     return;
   }
 
-  setHint("Перевожу...");
-  goBtn.disabled = true;
+  const source = fromEl.value;
+  const target = toEl.value;
+
+  const key = payloadKey(q, source, target);
+  if (key === lastPayloadKey) return; // не дергаем API, если ничего не поменялось
+  lastPayloadKey = key;
+
+  if (currentAbort) currentAbort.abort();
+  currentAbort = new AbortController();
+
+  setHint("Перевожу…");
 
   try {
     const r = await fetch("/api/translate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        q,
-        source: fromEl.value,
-        target: toEl.value,
-      }),
+      body: JSON.stringify({ q, source, target }),
+      signal: currentAbort.signal,
     });
 
-    // ВАЖНО: читаем как текст, потом пытаемся JSON.parse
     const text = await r.text();
     let data;
     try {
       data = JSON.parse(text);
     } catch {
-      // Если сервер вернул HTML/текст ошибки, покажем кусок
-      throw new Error(text.slice(0, 160) || "Ответ сервера не JSON");
+      throw new Error(text.slice(0, 200) || "Ответ сервера не JSON");
     }
 
     if (!r.ok) {
-      throw new Error(data?.error || "Ошибка перевода");
+      // показываем максимально понятную ошибку от твоего API
+      const msg =
+        data?.error ||
+        `HTTP ${r.status}` +
+          (data?.details ? `: ${data.details}` : "");
+      throw new Error(msg);
     }
 
     dstEl.value = data.translatedText || "";
     setHint("");
   } catch (e) {
+    // abort — это нормально, не показываем как ошибку
+    if (e?.name === "AbortError") return;
     setHint("Ошибка: " + (e?.message || e));
-  } finally {
-    goBtn.disabled = false;
   }
 }
 
-// Кнопки
-swapBtn.addEventListener("click", () => swapLanguages());
-goBtn.addEventListener("click", () => translateOnce());
+// События
+swapBtn.addEventListener("click", swapLanguages);
 
-// Дополнительно: если поменяли язык — очистим подсказку
-fromEl.addEventListener("change", () => setHint(""));
-toEl.addEventListener("change", () => setHint(""));
+// печатаешь — переводит
+srcEl.addEventListener("input", scheduleTranslate);
+
+// поменял язык — сразу переводит
+fromEl.addEventListener("change", scheduleTranslate);
+toEl.addEventListener("change", scheduleTranslate);
+
+// бонус: Ctrl+Enter — вставить перевод обратно (по желанию)
+srcEl.addEventListener("keydown", (ev) => {
+  if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") {
+    srcEl.value = dstEl.value || srcEl.value;
+    scheduleTranslate();
+  }
+});
