@@ -2,16 +2,16 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler
 import urllib.request
-import urllib.error
+import urllib.parse
 
 
-YC_API_KEY = os.getenv("YC_API_KEY", "").strip()
-YC_FOLDER_ID = os.getenv("YC_FOLDER_ID", "").strip()
+# Ожидаем в Vercel Environment Variables:
+# YC_API_KEY     = API-ключ сервисного аккаунта (тот, что ты создал с scope yc.ai.translate.execute)
+# YC_FOLDER_ID   = folder id (b1g...)
 
-YC_TRANSLATE_URL = os.getenv(
-    "YC_TRANSLATE_URL",
-    "https://translate.api.cloud.yandex.net/translate/v2/translate"
-).strip()
+
+YANDEX_IAM_TOKEN_URL = "https://iam.api.cloud.yandex.net/iam/v1/tokens"
+YANDEX_TRANSLATE_URL = "https://translate.api.cloud.yandex.net/translate/v2/translate"
 
 
 def _send(h, code: int, payload: dict):
@@ -32,49 +32,87 @@ def _read_json_body(h) -> dict:
     return json.loads(raw)
 
 
-def _norm_lang(code: str) -> str:
-    c = (code or "").strip().lower()
-    return c if c else "en"
+def _yandex_get_iam_token(api_key: str) -> str:
+    """
+    Получаем IAM-токен по API-ключу.
+    """
+    payload = json.dumps({"yandexPassportOauthToken": None, "apiKey": api_key}).encode("utf-8")
+
+    # Важно: IAM endpoint принимает JSON; поле apiKey поддерживается.
+    req = urllib.request.Request(
+        YANDEX_IAM_TOKEN_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urllib.request.urlopen(req, timeout=12) as r:
+        data = json.loads(r.read().decode("utf-8"))
+
+    token = (data.get("iamToken") or "").strip()
+    if not token:
+        raise RuntimeError(f"IAM token missing in response: {data}")
+    return token
 
 
-def _yandex_translate(text: str, source: str, target: str) -> dict:
-    if not YC_API_KEY:
-        raise RuntimeError("YC_API_KEY is not set (Vercel Env Var)")
-    if not YC_FOLDER_ID:
-        raise RuntimeError("YC_FOLDER_ID is not set (Vercel Env Var)")
-
-    target = _norm_lang(target)
-    source = (source or "").strip().lower()
-
+def _yandex_translate(iam_token: str, folder_id: str, text: str, source: str, target: str) -> str:
+    """
+    Перевод через Yandex Cloud Translate v2.
+    """
+    # Яндекс обычно ждёт коды типа "ru", "en"
     body = {
-        "folderId": YC_FOLDER_ID,
+        "folderId": folder_id,
         "texts": [text],
-        "targetLanguageCode": target,
+        "targetLanguageCode": (target or "en").strip(),
     }
-    if source and source != "auto":
-        body["sourceLanguageCode"] = _norm_lang(source)
+
+    src = (source or "auto").strip().lower()
+    if src != "auto":
+        body["sourceLanguageCode"] = src
 
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
 
     req = urllib.request.Request(
-        YC_TRANSLATE_URL,
+        YANDEX_TRANSLATE_URL,
         data=data,
-        method="POST",
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Api-Key {YC_API_KEY}",
-            "User-Agent": "tg-miniapp-translator/1.0",
+            "Authorization": f"Bearer {iam_token}",
         },
+        method="POST",
     )
 
     with urllib.request.urlopen(req, timeout=15) as r:
-        resp_text = r.read().decode("utf-8", errors="replace")
-        resp = json.loads(resp_text)
+        resp = json.loads(r.read().decode("utf-8"))
 
     translations = resp.get("translations") or []
-    out = (translations[0].get("text") or "") if translations else ""
-    detected = (translations[0].get("detectedLanguageCode") or "") if translations else ""
-    return {"text": out.strip(), "detected": detected}
+    if not translations:
+        raise RuntimeError(f"No translations in response: {resp}")
+    return (translations[0].get("text") or "").strip()
+
+
+def _parse_http_error(e) -> dict:
+    """
+    Достаём максимально полезную инфу из HTTPError от Яндекса.
+    """
+    info = {
+        "type": e.__class__.__name__,
+        "status": getattr(e, "code", None),
+        "reason": getattr(e, "reason", None),
+    }
+
+    try:
+        raw = e.read().decode("utf-8", errors="replace")
+        info["raw"] = raw[:2000]
+        try:
+            j = json.loads(raw)
+            info["yandex"] = j
+        except Exception:
+            pass
+    except Exception as _:
+        pass
+
+    return info
 
 
 class handler(BaseHTTPRequestHandler):
@@ -82,24 +120,14 @@ class handler(BaseHTTPRequestHandler):
         return _send(self, 200, {"ok": True})
 
     def do_POST(self):
-        if not os.getenv("YC_API_KEY"):
-            return _send(self, 500, {
-                "error": "ENV_CHECK",
-                "details": "YC_API_KEY missing at runtime"
-            })
-
-        if not os.getenv("YC_FOLDER_ID"):
-            return _send(self, 500, {
-                "error": "ENV_CHECK",
-                "details": "YC_FOLDER_ID missing at runtime"
-            })
         if self.path != "/api/translate":
             return _send(self, 404, {"error": "Not found"})
 
+        # 1) читаем тело
         try:
             data = _read_json_body(self)
         except Exception as e:
-            return _send(self, 400, {"error": f"Bad JSON: {e}"})
+            return _send(self, 400, {"error": "Bad JSON", "details": str(e)})
 
         q = (data.get("q") or "").strip()
         source = (data.get("source") or "auto").strip()
@@ -108,34 +136,22 @@ class handler(BaseHTTPRequestHandler):
         if not q:
             return _send(self, 400, {"error": "Empty text"})
 
+        # 2) ENV vars
+        yc_api_key = (os.getenv("YC_API_KEY") or "").strip()
+        yc_folder_id = (os.getenv("YC_FOLDER_ID") or "").strip()
+
+        if not yc_api_key:
+            return _send(self, 500, {"error": "ENV_CHECK", "details": "YC_API_KEY is not set (Vercel Env Var)"})
+        if not yc_folder_id:
+            return _send(self, 500, {"error": "ENV_CHECK", "details": "YC_FOLDER_ID is not set (Vercel Env Var)"})
+
+        # 3) IAM token -> translate
         try:
-            y = _yandex_translate(q, source, target)
-            return _send(self, 200, {
-                "translatedText": y["text"],
-                "provider": "yandex",
-                "detectedLanguageCode": y.get("detected", "")
-            })
-
+            iam = _yandex_get_iam_token(yc_api_key)
+            translated = _yandex_translate(iam, yc_folder_id, q, source, target)
+            return _send(self, 200, {"translatedText": translated, "provider": "yandex"})
         except urllib.error.HTTPError as e:
-            # Показать код и тело ошибки от Яндекса
-            err_body = e.read().decode("utf-8", errors="replace")
-            return _send(self, 502, {
-                "error": "Yandex Translate HTTPError",
-                "status": e.code,
-                "details": err_body[:2000],   # чтобы не раздувать ответ
-                "endpoint": YC_TRANSLATE_URL
-            })
-
-        except urllib.error.URLError as e:
-            return _send(self, 502, {
-                "error": "Yandex Translate URLError",
-                "details": str(e),
-                "endpoint": YC_TRANSLATE_URL
-            })
-
+            # Вот тут будет код/тело ошибки Яндекса
+            return _send(self, 502, {"error": "Yandex Translate HTTPError", "details": _parse_http_error(e)})
         except Exception as e:
-            return _send(self, 500, {
-                "error": "Yandex Translate UnknownError",
-                "details": str(e),
-            })
-
+            return _send(self, 502, {"error": "Yandex Translate UnknownError", "details": str(e)})
