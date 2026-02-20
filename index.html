@@ -1,68 +1,69 @@
 <!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Translator</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
   <div class="wrap">
-    <div class="row">
-      <select id="from">
-        <option value="auto">Автоматически определить</option>
-        <option value="ru" selected>Русский</option>
-        <option value="en">English</option>
-        <option value="de">Deutsch</option>
-        <option value="fr">Français</option>
-        <option value="es">Español</option>
-        <option value="it">Italiano</option>
-        <option value="pt">Português</option>
-        <option value="tr">Türkçe</option>
-        <option value="pl">Polski</option>
-        <option value="uk">Українська</option>
-        <option value="kk">Қазақша</option>
-        <option value="be">Беларуская</option>
-        <option value="ar">العربية</option>
-        <option value="zh">中文</option>
-        <option value="ja">日本語</option>
-        <option value="ko">한국어</option>
-        <option value="hi">हिन्दी</option>
-      </select>
+    <header class="header">
+      <div class="brand">
+        <div class="logo">T</div>
+        <div>
+          <div class="title">Переводчик</div>
+          <div class="subtitle" id="subtitle">Яндекс Translate</div>
+        </div>
+      </div>
+      <div class="pill" id="statusPill">Готов</div>
+    </header>
 
-      <button id="swap" type="button" title="Поменять языки">⇄</button>
+    <section class="card controls">
+      <div class="row">
+        <div class="field">
+          <label for="from">Исходный</label>
+          <select id="from"></select>
+          <div class="hintline" id="detectedLine"></div>
+        </div>
 
-      <select id="to">
-        <option value="en" selected>English</option>
-        <option value="ru">Русский</option>
-        <option value="de">Deutsch</option>
-        <option value="fr">Français</option>
-        <option value="es">Español</option>
-        <option value="it">Italiano</option>
-        <option value="pt">Português</option>
-        <option value="tr">Türkçe</option>
-        <option value="pl">Polski</option>
-        <option value="uk">Українська</option>
-        <option value="kk">Қазақша</option>
-        <option value="be">Беларуская</option>
-        <option value="ar">العربية</option>
-        <option value="zh">中文</option>
-        <option value="ja">日本語</option>
-        <option value="ko">한국어</option>
-        <option value="hi">हिन्दी</option>
-      </select>
-    </div>
+        <button class="swap" id="swap" title="Поменять языки местами" aria-label="swap">
+          ⇄
+        </button>
 
-    <textarea id="src" placeholder="Введите текст…"></textarea>
+        <div class="field">
+          <label for="to">Перевод</label>
+          <select id="to"></select>
+          <div class="hintline muted">Клик по переводу — копировать</div>
+        </div>
+      </div>
+    </section>
 
-    <!-- Кнопку можно оставить, но app.js её скрывает -->
-    <button id="go" type="button">Перевести</button>
+    <section class="grid">
+      <div class="card">
+        <div class="cardHeader">
+          <div class="cardTitle">Текст</div>
+          <div class="counter"><span id="srcCount">0</span>/5000</div>
+        </div>
+        <textarea id="src" placeholder="Введите текст…"></textarea>
+      </div>
 
-    <textarea id="dst" placeholder="Перевод появится здесь…" readonly></textarea>
+      <div class="card">
+        <div class="cardHeader">
+          <div class="cardTitle">Перевод</div>
+          <div class="actions">
+            <button class="ghost" id="copyBtn" type="button">Копировать</button>
+          </div>
+        </div>
+        <textarea id="dst" placeholder="Перевод появится здесь…" readonly></textarea>
+      </div>
+    </section>
 
-    <div id="hint" class="hint"></div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <div class="error" id="hint"></div>
   </div>
 
-  <script src="app.js"></script>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="/app.js"></script>
 </body>
 </html>
