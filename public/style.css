@@ -1,7 +1,7 @@
 :root{
   --bg: #0b1220;
   --panel: rgba(255,255,255,.06);
-  --panel2: rgba(0,0,0,.08);
+  --panel2: rgba(255,255,255,.08);
   --border: rgba(255,255,255,.10);
   --text: rgba(255,255,255,.92);
   --muted: rgba(255,255,255,.55);
@@ -58,8 +58,8 @@ body{
 }
 
 .sel:focus{
-  border-color: rgba(110,167,255,.55);
-  box-shadow: 0 0 0 3px rgba(110,167,255,.16);
+  border-color: rgba(0,0,0,.55);
+  box-shadow: 0 0 0 3px rgba(0,0,0,.16);
 }
 
 .swap{
@@ -188,4 +188,5 @@ body{
   box-shadow: 0 12px 40px rgba(0,0,0,.45);
   pointer-events: none;
 }
+
 
