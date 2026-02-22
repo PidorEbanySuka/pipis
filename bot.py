@@ -1,42 +1,49 @@
 import os
-import logging
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
+from dotenv import load_dotenv
+
+from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("miniapp-bot")
+load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-MINIAPP_URL = os.getenv("MINIAPP_URL", "").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEBAPP_URL = os.getenv("WEBAPP_URL", "https://pipis-tt66.vercel.app/")
 
-WELCOME_TEXT = "Нажми кнопку ниже, чтобы открыть мини‑приложение."
-
-
-def _keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("Открыть мини‑апп", web_app=WebAppInfo(url=MINIAPP_URL))]]
-    )
-
+if not BOT_TOKEN:
+    raise RuntimeError("Не найден BOT_TOKEN. Проверь файл .env")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not MINIAPP_URL:
-        await update.effective_message.reply_text("MINIAPP_URL не задан в переменных окружения.")
-        return
-    await update.effective_message.reply_text(WELCOME_TEXT, reply_markup=_keyboard())
+    # Кнопка, которая открывает Mini App
+    button = KeyboardButton(
+        text="🌐 Открыть переводчик",
+        web_app=WebAppInfo(url=WEBAPP_URL)
+    )
 
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[[button]],
+        resize_keyboard=True,
+        one_time_keyboard=False
+    )
 
-async def open_app(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await start(update, context)
+    await update.message.reply_text(
+        "Привет! Нажми кнопку ниже, чтобы открыть переводчик (Mini App).",
+        reply_markup=keyboard
+    )
 
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "Команды:\n"
+        "/start — открыть кнопку Mini App\n"
+        "/help — помощь"
+    )
 
 def main() -> None:
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is not set")
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("app", open_app))
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.add_handler(CommandHandler("help", help_cmd))
 
+    print("Бот запущен. Открой Telegram и напиши /start.")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
